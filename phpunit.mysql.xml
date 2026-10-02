@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    MySQL 8.4 test configuration (PRD §18 / §19).
+
+    The default phpunit.xml pins DB_CONNECTION=sqlite, so the whole suite runs
+    on SQLite for speed. That is fine for application logic but it does NOT
+    prove the two invariants that only exist at the database level on MySQL:
+
+      1. The appointment double-booking backstop is a MySQL STORED generated
+         column (`appointments.active_slot`) plus `UNIQUE(doctor_id,
+         active_slot)`, and only behaves correctly under genuine InnoDB row
+         contention. SQLite has no generated columns and no triggers at all,
+         so the Go-live gate "DB + application double-booking tests" has never
+         actually been exercised on MySQL.
+      2. The nightly backup uses `mysqldump`; the restore drill has only ever
+         run through Laravel's own SQLite-aware dump path.
+
+    Run this config explicitly, against a real MySQL 8.4:
+
+        composer run test:mysql
+
+    or via the harness, which also boots the container and writes the evidence
+    file:
+
+        scripts/verify-mysql.sh
+
+    Do not merge a claim of "MySQL verified" without output from this config.
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+>
+    <testsuites>
+        <!--
+            Only the suites that assert database-engine behaviour. Running the
+            whole suite on MySQL would be slow and would not add evidence: these
+            are the tests whose assertions depend on the engine.
+        -->
+        <testsuite name="MySQL Invariants">
+            <file>tests/Feature/ConcurrencyRaceTest.php</file>
+            <file>tests/Feature/BackupRestoreDrillTest.php</file>
+            <file>tests/Feature/MySqlInvariantTest.php</file>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>app</directory>
+        </include>
+    </source>
+    <php>
+        <env name="APP_ENV" value="testing"/>
+        <env name="AUTH_RATE_LIMIT_PER_MINUTE" value="5"/>
+        <env name="APP_MAINTENANCE_DRIVER" value="file"/>
+        <env name="BCRYPT_ROUNDS" value="4"/>
+        <env name="BROADCAST_CONNECTION" value="log"/>
+        <env name="CACHE_STORE" value="array"/>
+        <env name="QUEUE_CONNECTION" value="sync"/>
+        <env name="SESSION_DRIVER" value="array"/>
+        <env name="PULSE_ENABLED" value="false"/>
+        <env name="TELESCOPE_ENABLED" value="false"/>
+        <env name="NIGHTWATCH_ENABLED" value="false"/>
+
+        <!--
+            MySQL 8.4. The values are the defaults the verify-mysql.sh harness
+            and docker-compose.test.yml both use; override through the
+            environment when pointing at an existing server.
+        -->
+        <env name="DB_CONNECTION" value="mysql"/>
+        <env name="DB_HOST" value="127.0.0.1"/>
+        <env name="DB_PORT" value="3306"/>
+        <env name="DB_DATABASE" value="clinic_mysql_test"/>
+        <env name="DB_USERNAME" value="clinic"/>
+        <env name="DB_PASSWORD" value="clinic_secret"/>
+        <env name="DB_URL" value=""/>
+
+        <env name="REDIS_CLIENT" value="phpredis"/>
+        <env name="REDIS_HOST" value="127.0.0.1"/>
+        <env name="REDIS_PORT" value="6379"/>
+
+        <env name="MAIL_MAILER" value="array"/>
+        <env name="SANCTUM_STATEFUL_DOMAINS" value="localhost,127.0.0.1"/>
+
+        <!--
+            Tells the tests they are running on MySQL. The SQLite-specific race
+            tests skip themselves rather than passing vacuously, so a MySQL run
+            that silently degraded to SQLite would be visible as a skip count
+            rather than a green result.
+        -->
+        <env name="CLINIC_MYSQL_INVARIANTS" value="1"/>
+    </php>
+</phpunit>
